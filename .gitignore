@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+incidents.db
+test_incidents.db
+.env
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.mcache/

@@ -1,0 +1,62 @@
+{
+  "info": {
+    "name": "Incidents API",
+    "_postman_id": "incidents-api",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create incident",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8000/api/v1/incidents",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "v1",
+            "incidents"
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\"description\": \"Scooter offline\", \"source\": \"monitoring\"}"
+        }
+      }
+    },
+    {
+      "name": "List incidents",
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:8000/api/v1/incidents?status=NEW&limit=20&offset=0"
+      }
+    },
+    {
+      "name": "Update status",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "http://localhost:8000/api/v1/incidents/1/status",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"status\": \"IN_PROGRESS\"}"
+        }
+      }
+    }
+  ]
+}
