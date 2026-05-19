@@ -102,6 +102,28 @@ curl -i -X POST http://127.0.0.1:8000/api/v1/signals \
 
 First signal returns `201 Created`. Repeated open signals with the same fingerprint return `202 Accepted` and update the existing incident.
 
+## Screenshots
+
+### API Overview
+
+![API overview](docs/screenshots/swagger-overview.png)
+
+### Fingerprint Deduplication
+
+![Fingerprint deduplication](docs/screenshots/deduplication-response.png)
+
+### Audit Trail And Reopen
+
+![Audit trail](docs/screenshots/audit-trail.png)
+
+### Notification Delivery Audit
+
+![Notification audit](docs/screenshots/notification-audit.png)
+
+### Prometheus Metrics
+
+![Prometheus metrics](docs/screenshots/prometheus-metrics.png)
+
 ## Optimistic Locking
 
 ETags are based on the incident version:
