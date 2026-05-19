@@ -1,11 +1,13 @@
-#алембик конф чтобы миграции знали про модельки и типы
+import sys
+from pathlib import Path
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 from alembic import context
 from app.adapters.orm import Base
 from app.adapters.db import engine
 
-# this is the Alembic Config object, which provides access to the values within the .ini file in use.
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

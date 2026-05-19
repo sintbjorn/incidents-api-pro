@@ -34,7 +34,8 @@ ALLOWED_CHAT_IDS: Set[int] = {int(x) for x in S.TELEGRAM_CHAT_ID.split(",")}
 
 # парсинг источника 
 SOURCE_RE = re.compile(
-    r"(?:^\[(?P<tag>operator|monitoring|partner)\]\s*)|(?:\bsource=(?P<kv>operator|monitoring|partner)\b)",
+    r"(?:^\[(?P<tag>operator|monitoring|partner|system)\]\s*)|"
+    r"(?:\bsource=(?P<kv>operator|monitoring|partner|system)\b)",
     re.IGNORECASE,
 )
 
@@ -43,19 +44,35 @@ def extract_source_and_description(text: str):
     m = SOURCE_RE.search(text or "")
     if m:
         picked = (m.group("tag") or m.group("kv") or "").lower()
-        if picked in {"operator", "monitoring", "partner"}:
+        if picked in {"operator", "monitoring", "partner", "system"}:
             source = picked
         #убираем маркер источника из описания чтобы не засорять
         text = SOURCE_RE.sub("", text).strip(" -|")
     return source, (text or "").strip()
 
-#вызовы API 
+def make_fingerprint(source: str, description: str) -> str:
+    normalized = re.sub(r"\s+", " ", description.strip().lower())
+    return f"telegram:{source}:{normalized[:180]}"
+
+
+#вызовы API
 async def api_create_incident(description: str, source: str, idempotency_key: str) -> dict:
     headers = {"Content-Type": "application/json", "X-Idempotency-Key": idempotency_key}
     if S.API_KEY:
         headers["X-API-Key"] = S.API_KEY
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.post(f"{S.API_URL}/api/v1/incidents", json={"description": description, "source": source}, headers=headers)
+        r = await client.post(
+            f"{S.API_URL}/api/v1/signals",
+            json={
+                "title": description[:120],
+                "description": description,
+                "severity": "WARNING",
+                "source": source,
+                "fingerprint": make_fingerprint(source, description),
+                "target": "telegram",
+            },
+            headers=headers,
+        )
         r.raise_for_status()
         return r.json()
 
@@ -93,7 +110,8 @@ async def on_update(message: Message):
         await message.reply("Использование: /update <id> <status>")
         return
     try:
-        inc_id = int(parts[1]); new_status = parts[2].upper()
+        inc_id = int(parts[1])
+        new_status = parts[2].upper()
         data = await api_update_status(inc_id, new_status)
         await message.reply(f"✅ Обновлён инцидент #{data['id']}: {data['status']}")
     except Exception as e:

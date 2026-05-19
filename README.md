@@ -1,185 +1,143 @@
-# Incidents API (FastAPI)
+# PulseWatch Incident Service
 
-Небольшой продакшен-готовый сервис учета инцидентов.
+Detect, deduplicate, track, and notify production incidents.
 
-## Модель
+PulseWatch is a production-ready incident management microservice. It accepts operational signals from monitoring, operators, partners, and systems; creates or deduplicates incidents by fingerprint; tracks lifecycle state; keeps an audit trail; exposes Prometheus metrics; and is ready to integrate with a dedicated Notification Service.
+
+## Core Model
+
+`Incident`
 
 - `id: int`
+- `title: str`
 - `description: str`
-- `status: NEW | IN_PROGRESS | RESOLVED | CLOSED`
-- `source: operator | monitoring | partner`
-- `created_at: datetime (UTC)`
+- `status: NEW | ACKNOWLEDGED | IN_PROGRESS | RESOLVED | CLOSED`
+- `severity: INFO | WARNING | CRITICAL`
+- `source: operator | monitoring | partner | system`
+- `fingerprint: str`
+- `target: str`
+- `created_at`, `updated_at`, `resolved_at`, `closed_at`
+- `last_seen_at`, `occurrence_count`
+- `version: int`
 
-Переходы:  
-`NEW -> IN_PROGRESS <-> RESOLVED -> CLOSED`  
-(при нарушении — `409 Conflict`).  
+`IncidentEvent`
 
-> Статус `RESOLVED` может вернуться в `IN_PROGRESS`, если клиент не подтвердил исправление инцидента.
+- `id`
+- `incident_id`
+- `event_type: CREATED | SIGNAL_RECEIVED | STATUS_CHANGED | COMMENT_ADDED | NOTIFICATION_SENT | AUTO_RESOLVED`
+- `payload: JSON`
+- `created_at`
 
+Lifecycle:
 
+```text
+NEW -> ACKNOWLEDGED -> IN_PROGRESS <-> RESOLVED -> CLOSED
+```
 
-## Быстрый старт (Docker)
+`fingerprint` is the deduplication key, usually built from `target + source + error_code/title`. Repeated open signals update `last_seen_at`, increment `occurrence_count`, bump `version`, and append an audit event instead of creating duplicate incidents.
 
+## Quick Start
+
+```bash
 cp .env.example .env
 docker-compose up --build
-# API:     http://localhost:8000
-# Swagger: http://localhost:8000/docs
-# Health:  http://localhost:8000/health
-# Metrics: http://localhost:8000/metrics
+```
 
+API: `http://localhost:8000`
+Swagger: `http://localhost:8000/docs`
+Health: `http://localhost:8000/health/live`, `http://localhost:8000/health/ready`
+Metrics: `http://localhost:8000/metrics`
 
-## Быстрый старт (локально)
+Local:
 
+```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.entrypoints.api:app --reload
-
-
-## Эндпоинты
-
-### Основные
-
-* `POST /api/v1/incidents` — создать инцидент
-* `GET  /api/v1/incidents?status=NEW&source=monitoring&limit=50&offset=0` — получить список (с поддержкой фильтров по `status` и `source`)
-  **Заголовки ответа:**
-
-  * `X-Total-Count` — общее количество
-  * `Content-Range` — диапазон элементов
-* `PATCH /api/v1/incidents/{id}` — обновить конкретный инцидент (сменить статус и/или дополнить описание)
-
-  * Поддержка `ETag` / `If-Match`
-* `GET /health` — проверка состояния сервиса
-* `GET /metrics` — метрики Prometheus
-
-
-## PATCH /api/v1/incidents/{id}
-
-**Тело запроса:**
-
-```
-{
-  "status": "IN_PROGRESS",           // необязательно
-  "description_append": "добавить комментарий" // необязательно
-}
 ```
 
-**Заголовки:**
+## Endpoints
 
-```
-If-Match: W/<id>-<текущий_статус>   # оптимистическая блокировка (опционально)
-```
+- `POST /api/v1/signals` - ingest monitoring/operator/partner signal with fingerprint deduplication
+- `POST /api/v1/incidents` - create incident directly
+- `GET /api/v1/incidents?status=NEW&source=monitoring&limit=50&offset=0` - list incidents
+- `GET /api/v1/incidents/{id}` - incident details
+- `PATCH /api/v1/incidents/{id}` - update status and/or append description
+- `POST /api/v1/incidents/{id}/ack` - acknowledge incident
+- `POST /api/v1/incidents/{id}/resolve` - resolve incident, optionally with comment
+- `POST /api/v1/incidents/{id}/close` - close incident
+- `POST /api/v1/incidents/{id}/comments` - append operator comment
+- `GET /api/v1/incidents/{id}/events` - audit trail
+- `GET /health/live` - liveness
+- `GET /health/ready` - DB readiness
+- `GET /metrics` - Prometheus metrics
 
-**Ответ:**
+List responses include `X-Total-Count` and `Content-Range`.
 
-```
-{
-  "id": 1,
-  "description": "Самокат #42 оффлайн\nдобавить комментарий",
-  "status": "IN_PROGRESS",
-  "source": "monitoring",
-  "created_at": "2025-11-08T12:00:00Z"
-}
-```
+## Signal Example
 
-
-## Примеры curl
-
-### Создать инц
-
-```
-curl -s -X POST http://127.0.0.1:8000/api/v1/incidents \
- -H "Content-Type: application/json" \
- -d '{"description":"Самокат #42 оффлайн","source":"monitoring"}'
-```
-
-### Получить список (фильтр по статусу и источнику)
-
-```
-curl -s "http://127.0.0.1:8000/api/v1/incidents?status=NEW&source=monitoring&limit=20&offset=0"
+```bash
+curl -i -X POST http://127.0.0.1:8000/api/v1/signals \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source": "monitoring",
+    "target": "renovation-flip-api",
+    "title": "High API latency",
+    "description": "P95 latency is above 1500ms",
+    "severity": "WARNING",
+    "fingerprint": "renovation-flip-api:latency:p95"
+  }'
 ```
 
-### Обновить статус
+First signal returns `201 Created`. Repeated open signals with the same fingerprint return `202 Accepted` and update the existing incident.
 
-```
-curl -i -s -X PATCH http://127.0.0.1:8000/api/v1/incidents/1 \
- -H "Content-Type: application/json" \
- -d '{"status":"IN_PROGRESS"}'
-```
+## Optimistic Locking
 
-### Дополнить описание
+ETags are based on the incident version:
 
-```
-curl -i -s -X PATCH http://127.0.0.1:8000/api/v1/incidents/1 \
- -H "Content-Type: application/json" \
- -d '{"description_append":"Клиент перезагрузил роутер, проблема осталась"}'
+```text
+ETag: W/"incident-1-v3"
+If-Match: W/"incident-1-v3"
 ```
 
-### Пример конфликта перехода (409 Conflict)
+Every material change increments `version`. A stale `If-Match` returns `412 Precondition Failed`.
 
-```
-curl -i -s -X PATCH http://127.0.0.1:8000/api/v1/incidents/1 \
- -H "Content-Type: application/json" \
- -d '{"status":"NEW"}'
+## Prometheus Metrics
+
+- `incidents_created_total{severity,source}`
+- `incident_signals_deduplicated_total{severity,source}`
+- `incident_status_transitions_total{from_status,to_status}`
+- `requests_total`
+
+## Notification Service Integration
+
+PulseWatch is designed to call a separate Notification Service when a critical incident is created:
+
+```text
+PulseWatch Incident Service
+  -> POST /api/notifications/
+  -> Notification Service
+  -> Email / Telegram / SMS
 ```
 
-## Миграции
+The current domain already includes `NOTIFICATION_SENT` events, so delivery requests can be audited without mixing incident lifecycle with notification transport.
 
-```
-alembic upgrade head
-# создать новую авто-миграцию
-alembic revision --autogenerate -m "change"
-```
+## Renovation Flip Examples
 
-## Тесты
-```
+- `renovation-flip-api down`
+- `property ingestion job failed`
+- `high 5xx error rate`
+- `listing parser stopped receiving data`
+- `payment webhook latency high`
+- `notification delivery failures increased`
+- `database readiness failed`
+
+## Quality Gates
+
+```bash
 pytest -q
+ruff check .
+mypy app
+alembic upgrade head
+docker build .
 ```
-
-## чем лучше обычной версии лайт
-
-* Чистая архитектура (domain / adapters / entrypoints)
-* Гибкие фильтры по статусу и источнику
-* Метрики и health для эксплуатации
-* Пагинация и подсчёт общего числа записей
-* ETag для оптимистической блокировки
-* CI / линтеры / форматирование / миграции — культура качества
-* Возможность обновлять описание и статус в одном PATCH-запросе
-* Строгая валидация переходов статусов (`NEW → IN_PROGRESS <-> RESOLVED → CLOSED`)
-
-## Интеграция с Telegram-ботом
-
-**Цель:** автоматически регистрировать инциденты, отправленные в Telegram-группу (операторы / системы).
-
-Бот работает как отдельный микросервис и обращается к API через HTTP.
-
-### Переменные окружения (`.env`)
-
-```
-TELEGRAM_BOT_TOKEN = <токен_бота>
-TELEGRAM_CHAT_ID = <id_группы>
-API_URL = http://api:8000
-API_KEY = <если включена авторизация>
-```
-
-### Запуск бота (локально)
-
-```
-cd bot
-python main.py
-```
-
-**Пример работы бота:**
-
-1. Пользователь пишет в Telegram-группу:
-
-   ```
-   [monitoring] Самокат #42 не отвечает
-   ```
-2. Бот создает инцидент в API:
-   `POST /api/v1/incidents`
-3. После решения инцидента оператор пишет:
-
-   ```
-   #42 fixed
-   ```
-4. Бот вызывает `PATCH /api/v1/incidents/{id}` и меняет статус на `RESOLVED`.

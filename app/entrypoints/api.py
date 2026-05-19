@@ -8,7 +8,11 @@ from app.entrypoints.routes import incidents, health
 from app.adapters.orm import Base
 from app.adapters.db import engine
 
-app = FastAPI(title="Incidents API", version="1.0.0")
+app = FastAPI(
+    title="PulseWatch Incident Service",
+    version="2.0.0",
+    description="Detect, deduplicate, track, and notify production incidents.",
+)
 
 # dev: ждём БД и создаем таблицы
 for _ in range(30):

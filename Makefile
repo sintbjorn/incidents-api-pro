@@ -13,4 +13,4 @@ migrate:
 alembic_init:
 	alembic revision --autogenerate -m "init"
 seed:
-	python -c "from app.adapters.db import SessionLocal; from app.adapters.repo import SqlAlchemyIncidentsRepo; from app.domain.models import Source; from app.services.incidents import create; s=SessionLocal(); r=SqlAlchemyIncidentsRepo(s); [create(r, f'demo #'+str(i), Source.monitoring) for i in range(1,6)]; s.commit(); s.close()"
+	python -c "from app.adapters.db import SessionLocal; from app.adapters.repo import SqlAlchemyIncidentsRepo; from app.domain.models import Severity, Source; from app.services.incidents import create; s=SessionLocal(); r=SqlAlchemyIncidentsRepo(s); [create(r, 'Demo incident '+str(i), 'demo signal', Severity.WARNING, Source.monitoring, 'demo:'+str(i), 'demo-api') for i in range(1,6)]; s.commit(); s.close()"

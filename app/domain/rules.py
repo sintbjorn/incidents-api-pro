@@ -2,9 +2,9 @@
 from .models import Status
 
 ALLOWED = {
-    Status.NEW: {Status.IN_PROGRESS},
+    Status.NEW: {Status.ACKNOWLEDGED},
+    Status.ACKNOWLEDGED: {Status.IN_PROGRESS, Status.RESOLVED},
     Status.IN_PROGRESS: {Status.RESOLVED},
-    # разрешаем возврат на доработку
     Status.RESOLVED: {Status.IN_PROGRESS, Status.CLOSED},
     Status.CLOSED: set(),
 }
