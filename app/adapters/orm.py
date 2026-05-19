@@ -1,6 +1,16 @@
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
 from sqlalchemy import String, Enum, DateTime, func, Integer, ForeignKey, JSON, Index
-from app.domain.models import EventType, IncidentEvent, Severity, Status, Source, Incident
+from app.domain.models import (
+    EventType,
+    Incident,
+    IncidentEvent,
+    IncidentNotification,
+    NotificationChannel,
+    NotificationStatus,
+    Severity,
+    Source,
+    Status,
+)
 from datetime import datetime
 from typing import Any
 
@@ -31,6 +41,9 @@ class IncidentORM(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     events: Mapped[list["IncidentEventORM"]] = relationship(
+        back_populates="incident", cascade="all, delete-orphan"
+    )
+    notifications: Mapped[list["IncidentNotificationORM"]] = relationship(
         back_populates="incident", cascade="all, delete-orphan"
     )
 
@@ -80,4 +93,32 @@ class IncidentEventORM(Base):
             event_type=self.event_type,
             payload=self.payload,
             created_at=self.created_at,
+        )
+
+class IncidentNotificationORM(Base):
+    __tablename__ = "incident_notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(ForeignKey("incidents.id"), nullable=False, index=True)
+    notification_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    channel: Mapped[NotificationChannel] = mapped_column(Enum(NotificationChannel), nullable=False)
+    status: Mapped[NotificationStatus] = mapped_column(Enum(NotificationStatus), nullable=False)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    incident: Mapped[IncidentORM] = relationship(back_populates="notifications")
+
+    def to_domain(self) -> IncidentNotification:
+        return IncidentNotification(
+            id=self.id,
+            incident_id=self.incident_id,
+            notification_id=self.notification_id,
+            channel=self.channel,
+            status=self.status,
+            error=self.error,
+            created_at=self.created_at,
+            sent_at=self.sent_at,
         )

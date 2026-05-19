@@ -5,11 +5,20 @@ from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
-from app.adapters.orm import IncidentEventORM, IncidentORM
-from app.domain.models import EventType, Incident, IncidentEvent, Source, Status
+from app.adapters.orm import IncidentEventORM, IncidentNotificationORM, IncidentORM
+from app.domain.models import (
+    EventType,
+    Incident,
+    IncidentEvent,
+    IncidentNotification,
+    NotificationChannel,
+    NotificationStatus,
+    Source,
+    Status,
+)
 
 
-OPEN_STATUSES = (Status.NEW, Status.ACKNOWLEDGED, Status.IN_PROGRESS, Status.RESOLVED)
+ACTIVE_STATUSES = (Status.NEW, Status.ACKNOWLEDGED, Status.IN_PROGRESS, Status.RESOLVED)
 
 
 class IncidentsRepo(Protocol):
@@ -19,8 +28,8 @@ class IncidentsRepo(Protocol):
     def list(
         self, status: Status | None, source: Source | None, limit: int, offset: int
     ) -> tuple[list[Incident], int]: ...
-    def find_open_by_fingerprint(self, fingerprint: str) -> Incident | None: ...
-    def mark_seen(self, id_: int, payload: dict[str, Any]) -> Incident: ...
+    def find_active_by_fingerprint(self, fingerprint: str) -> Incident | None: ...
+    def mark_seen(self, id_: int, payload: dict[str, Any], reopen_resolved: bool) -> Incident: ...
     def update(
         self,
         id_: int,
@@ -32,6 +41,15 @@ class IncidentsRepo(Protocol):
         self, incident_id: int, event_type: EventType, payload: dict[str, Any]
     ) -> IncidentEvent: ...
     def list_events(self, incident_id: int) -> list[IncidentEvent]: ...
+    def add_notification(
+        self,
+        incident_id: int,
+        channel: NotificationChannel,
+        status: NotificationStatus,
+        notification_id: str | None = None,
+        error: str | None = None,
+    ) -> IncidentNotification: ...
+    def list_notifications(self, incident_id: int) -> list[IncidentNotification]: ...
 
 
 class SqlAlchemyIncidentsRepo:
@@ -78,24 +96,36 @@ class SqlAlchemyIncidentsRepo:
         )
         return [row.to_domain() for row in items], total
 
-    def find_open_by_fingerprint(self, fingerprint: str) -> Incident | None:
+    def find_active_by_fingerprint(self, fingerprint: str) -> Incident | None:
         row = (
             self.s.query(IncidentORM)
             .filter(
                 IncidentORM.fingerprint == fingerprint,
-                IncidentORM.status.in_(OPEN_STATUSES),
+                IncidentORM.status.in_(ACTIVE_STATUSES),
             )
             .order_by(IncidentORM.created_at.desc(), IncidentORM.id.desc())
             .first()
         )
         return row.to_domain() if row else None
 
-    def mark_seen(self, id_: int, payload: dict[str, Any]) -> Incident:
+    def mark_seen(self, id_: int, payload: dict[str, Any], reopen_resolved: bool) -> Incident:
         row = self._require_row(id_)
         now = datetime.now(timezone.utc)
         row.last_seen_at = now
         row.updated_at = now
         row.occurrence_count += 1
+        if reopen_resolved and row.status == Status.RESOLVED:
+            row.status = Status.IN_PROGRESS
+            row.resolved_at = None
+            self.add_event(
+                id_,
+                EventType.STATUS_CHANGED,
+                {
+                    "from_status": Status.RESOLVED.value,
+                    "to_status": Status.IN_PROGRESS.value,
+                    "reason": "signal_reappeared",
+                },
+            )
         row.version += 1
         self.s.add(row)
         self.add_event(id_, EventType.SIGNAL_RECEIVED, payload)
@@ -161,6 +191,40 @@ class SqlAlchemyIncidentsRepo:
             self.s.query(IncidentEventORM)
             .filter(IncidentEventORM.incident_id == incident_id)
             .order_by(IncidentEventORM.created_at.asc(), IncidentEventORM.id.asc())
+            .all()
+        )
+        return [row.to_domain() for row in rows]
+
+    def add_notification(
+        self,
+        incident_id: int,
+        channel: NotificationChannel,
+        status: NotificationStatus,
+        notification_id: str | None = None,
+        error: str | None = None,
+    ) -> IncidentNotification:
+        sent_at = datetime.now(timezone.utc) if status == NotificationStatus.SENT else None
+        row = IncidentNotificationORM(
+            incident_id=incident_id,
+            channel=channel,
+            status=status,
+            notification_id=notification_id,
+            error=error,
+            sent_at=sent_at,
+        )
+        self.s.add(row)
+        self.s.flush()
+        self.s.refresh(row)
+        return row.to_domain()
+
+    def list_notifications(self, incident_id: int) -> list[IncidentNotification]:
+        rows = (
+            self.s.query(IncidentNotificationORM)
+            .filter(IncidentNotificationORM.incident_id == incident_id)
+            .order_by(
+                IncidentNotificationORM.created_at.asc(),
+                IncidentNotificationORM.id.asc(),
+            )
             .all()
         )
         return [row.to_domain() for row in rows]

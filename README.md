@@ -24,9 +24,19 @@ PulseWatch is a production-ready incident management microservice. It accepts op
 
 - `id`
 - `incident_id`
-- `event_type: CREATED | SIGNAL_RECEIVED | STATUS_CHANGED | COMMENT_ADDED | NOTIFICATION_SENT | AUTO_RESOLVED`
+- `event_type: CREATED | SIGNAL_RECEIVED | STATUS_CHANGED | COMMENT_ADDED | NOTIFICATION_SENT | NOTIFICATION_FAILED | AUTO_RESOLVED`
 - `payload: JSON`
 - `created_at`
+
+`IncidentNotification`
+
+- `id`
+- `incident_id`
+- `notification_id`
+- `channel: email | telegram | sms`
+- `status: REQUESTED | SENT | FAILED | SKIPPED`
+- `error`
+- `created_at`, `sent_at`
 
 Lifecycle:
 
@@ -34,7 +44,7 @@ Lifecycle:
 NEW -> ACKNOWLEDGED -> IN_PROGRESS <-> RESOLVED -> CLOSED
 ```
 
-`fingerprint` is the deduplication key, usually built from `target + source + error_code/title`. Repeated open signals update `last_seen_at`, increment `occurrence_count`, bump `version`, and append an audit event instead of creating duplicate incidents.
+`fingerprint` is the deduplication key, usually built from `target + source + error_code/title`. Repeated active signals update `last_seen_at`, increment `occurrence_count`, bump `version`, and append an audit event instead of creating duplicate incidents. If a repeated signal arrives for a `RESOLVED` incident, PulseWatch reopens it as `IN_PROGRESS`. If the previous incident is `CLOSED`, a new incident is created.
 
 ## Quick Start
 
@@ -68,6 +78,7 @@ uvicorn app.entrypoints.api:app --reload
 - `POST /api/v1/incidents/{id}/close` - close incident
 - `POST /api/v1/incidents/{id}/comments` - append operator comment
 - `GET /api/v1/incidents/{id}/events` - audit trail
+- `GET /api/v1/incidents/{id}/notifications` - notification delivery attempts
 - `GET /health/live` - liveness
 - `GET /health/ready` - DB readiness
 - `GET /metrics` - Prometheus metrics
@@ -107,11 +118,12 @@ Every material change increments `version`. A stale `If-Match` returns `412 Prec
 - `incidents_created_total{severity,source}`
 - `incident_signals_deduplicated_total{severity,source}`
 - `incident_status_transitions_total{from_status,to_status}`
+- `notification_delivery_requests_total{status}`
 - `requests_total`
 
 ## Notification Service Integration
 
-PulseWatch is designed to call a separate Notification Service when a critical incident is created:
+PulseWatch calls a separate Notification Service when a `CRITICAL` incident is created:
 
 ```text
 PulseWatch Incident Service
@@ -120,7 +132,16 @@ PulseWatch Incident Service
   -> Email / Telegram / SMS
 ```
 
-The current domain already includes `NOTIFICATION_SENT` events, so delivery requests can be audited without mixing incident lifecycle with notification transport.
+Enable it with:
+
+```env
+NOTIFICATION_SERVICE_URL=http://notification-service:8000
+NOTIFICATION_SERVICE_API_KEY=
+NOTIFICATION_CHANNEL=telegram
+NOTIFICATION_TIMEOUT_SECONDS=5
+```
+
+If the Notification Service is disabled, PulseWatch records the attempt as `SKIPPED`. Successful and failed attempts are stored in `incident_notifications` and mirrored into the audit trail as `NOTIFICATION_SENT` or `NOTIFICATION_FAILED`.
 
 ## Renovation Flip Examples
 

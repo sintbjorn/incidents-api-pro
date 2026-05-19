@@ -1,6 +1,13 @@
 from alembic import op
 import sqlalchemy as sa
-from app.domain.models import EventType, Severity, Source, Status
+from app.domain.models import (
+    EventType,
+    NotificationChannel,
+    NotificationStatus,
+    Severity,
+    Source,
+    Status,
+)
 
 # revision identifiers, used by Alembic.
 revision = "20251108_133921"
@@ -58,8 +65,31 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_incident_events_incident_id", "incident_events", ["incident_id"])
+    op.create_table(
+        "incident_notifications",
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("incident_id", sa.Integer, sa.ForeignKey("incidents.id"), nullable=False),
+        sa.Column("notification_id", sa.String(length=200), nullable=True),
+        sa.Column("channel", sa.Enum(NotificationChannel), nullable=False),
+        sa.Column("status", sa.Enum(NotificationStatus), nullable=False),
+        sa.Column("error", sa.String(length=1000), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+            nullable=False,
+        ),
+        sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_index(
+        "ix_incident_notifications_incident_id",
+        "incident_notifications",
+        ["incident_id"],
+    )
 
 def downgrade() -> None:
+    op.drop_index("ix_incident_notifications_incident_id", table_name="incident_notifications")
+    op.drop_table("incident_notifications")
     op.drop_index("ix_incident_events_incident_id", table_name="incident_events")
     op.drop_table("incident_events")
     op.drop_index("ix_incidents_open_fingerprint", table_name="incidents")

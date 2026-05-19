@@ -27,7 +27,19 @@ class EventType(StrEnum):
     STATUS_CHANGED = "STATUS_CHANGED"
     COMMENT_ADDED = "COMMENT_ADDED"
     NOTIFICATION_SENT = "NOTIFICATION_SENT"
+    NOTIFICATION_FAILED = "NOTIFICATION_FAILED"
     AUTO_RESOLVED = "AUTO_RESOLVED"
+
+class NotificationChannel(StrEnum):
+    email = "email"
+    telegram = "telegram"
+    sms = "sms"
+
+class NotificationStatus(StrEnum):
+    REQUESTED = "REQUESTED"
+    SENT = "SENT"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
 
 @dataclass(frozen=True, slots=True)
 class Incident:
@@ -88,3 +100,14 @@ class IncidentEvent:
             payload=payload,
             created_at=datetime.now(timezone.utc),
         )
+
+@dataclass(frozen=True, slots=True)
+class IncidentNotification:
+    id: int | None
+    incident_id: int
+    channel: NotificationChannel
+    status: NotificationStatus
+    notification_id: str | None
+    error: str | None
+    created_at: datetime
+    sent_at: datetime | None = None

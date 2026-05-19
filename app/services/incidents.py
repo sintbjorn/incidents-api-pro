@@ -1,7 +1,18 @@
 from typing import Any
 
 from app.adapters.repo import IncidentsRepo
-from app.domain.models import EventType, Incident, IncidentEvent, Severity, Source, Status
+from app.adapters.notifications import NotificationClient
+from app.domain.models import (
+    EventType,
+    Incident,
+    IncidentEvent,
+    IncidentNotification,
+    NotificationChannel,
+    NotificationStatus,
+    Severity,
+    Source,
+    Status,
+)
 from app.domain.rules import ensure_transition
 
 
@@ -49,7 +60,7 @@ def ingest_signal(
     fingerprint: str,
     target: str,
 ) -> tuple[Incident, bool]:
-    existing = repo.find_open_by_fingerprint(fingerprint)
+    existing = repo.find_active_by_fingerprint(fingerprint)
     payload: dict[str, Any] = {
         "title": title,
         "description": description,
@@ -59,8 +70,44 @@ def ingest_signal(
         "target": target,
     }
     if existing and existing.id is not None:
-        return repo.mark_seen(existing.id, payload), False
+        return repo.mark_seen(existing.id, payload, reopen_resolved=True), False
     return create(repo, title, description, severity, source, fingerprint, target), True
+
+
+def request_critical_notification(
+    repo: IncidentsRepo,
+    client: NotificationClient,
+    incident: Incident,
+    channel: NotificationChannel,
+) -> IncidentNotification | None:
+    if incident.id is None or incident.severity != Severity.CRITICAL:
+        return None
+
+    result = client.send_incident_alert(incident, channel)
+    status = NotificationStatus(result.status)
+    notification = repo.add_notification(
+        incident.id,
+        channel,
+        status,
+        notification_id=result.notification_id,
+        error=result.error,
+    )
+    event_type = (
+        EventType.NOTIFICATION_SENT
+        if status == NotificationStatus.SENT
+        else EventType.NOTIFICATION_FAILED
+    )
+    repo.add_event(
+        incident.id,
+        event_type,
+        {
+            "channel": channel.value,
+            "status": status.value,
+            "notification_id": result.notification_id,
+            "error": result.error,
+        },
+    )
+    return notification
 
 
 def list_(
@@ -118,3 +165,8 @@ def add_comment(repo: IncidentsRepo, id_: int, comment: str) -> Incident:
 def list_events(repo: IncidentsRepo, id_: int) -> list[IncidentEvent]:
     get(repo, id_)
     return repo.list_events(id_)
+
+
+def list_notifications(repo: IncidentsRepo, id_: int) -> list[IncidentNotification]:
+    get(repo, id_)
+    return repo.list_notifications(id_)

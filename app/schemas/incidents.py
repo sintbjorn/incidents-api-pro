@@ -3,7 +3,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.models import EventType, Severity, Source, Status
+from app.domain.models import (
+    EventType,
+    NotificationChannel,
+    NotificationStatus,
+    Severity,
+    Source,
+    Status,
+)
 
 
 class IncidentCreate(BaseModel):
@@ -60,3 +67,16 @@ class IncidentEventOut(BaseModel):
     event_type: EventType
     payload: dict[str, Any]
     created_at: datetime
+
+
+class IncidentNotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    incident_id: int
+    channel: NotificationChannel
+    status: NotificationStatus
+    notification_id: str | None
+    error: str | None
+    created_at: datetime
+    sent_at: datetime | None

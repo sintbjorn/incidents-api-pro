@@ -2,18 +2,21 @@ from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Resp
 from prometheus_client import Counter
 
 from app.adapters.db import session_dep
+from app.adapters.notifications import NotificationClient, get_notification_client
 from app.adapters.repo import SqlAlchemyIncidentsRepo
-from app.domain.models import Source, Status
+from app.domain.models import NotificationChannel, Source, Status
 from app.schemas.incidents import (
     CommentCreate,
     IncidentCreate,
     IncidentEventOut,
+    IncidentNotificationOut,
     IncidentOut,
     IncidentUpdate,
     ResolveCreate,
     SignalIn,
 )
 from app.services import incidents as svc
+from app.settings import settings
 
 router = APIRouter()
 
@@ -31,6 +34,11 @@ STATUS_TRANSITIONS = Counter(
     "incident_status_transitions_total",
     "Incident status transitions",
     ("from_status", "to_status"),
+)
+NOTIFICATION_REQUESTS = Counter(
+    "notification_delivery_requests_total",
+    "Notification delivery requests by status",
+    ("status",),
 )
 
 
@@ -52,8 +60,32 @@ def _raise_api_error(exc: Exception) -> None:
     raise exc
 
 
+def _notification_channel() -> NotificationChannel:
+    return NotificationChannel(settings.NOTIFICATION_CHANNEL)
+
+
+def _notify_if_needed(
+    repo: SqlAlchemyIncidentsRepo,
+    client: NotificationClient,
+    incident: IncidentOut,
+) -> None:
+    notification = svc.request_critical_notification(
+        repo,
+        client,
+        svc.get(repo, incident.id),
+        _notification_channel(),
+    )
+    if notification:
+        NOTIFICATION_REQUESTS.labels(notification.status.value).inc()
+
+
 @router.post("/incidents", response_model=IncidentOut, status_code=201)
-def create_incident(payload: IncidentCreate, response: Response, repo=Depends(get_repo)):
+def create_incident(
+    payload: IncidentCreate,
+    response: Response,
+    repo=Depends(get_repo),
+    notification_client: NotificationClient = Depends(get_notification_client),
+):
     incident = svc.create(
         repo,
         payload.title,
@@ -65,12 +97,18 @@ def create_incident(payload: IncidentCreate, response: Response, repo=Depends(ge
     )
     INCIDENTS_CREATED.labels(payload.severity.value, payload.source.value).inc()
     out = IncidentOut.model_validate(incident)
+    _notify_if_needed(repo, notification_client, out)
     _set_etag(response, out)
     return out
 
 
 @router.post("/signals", response_model=IncidentOut, status_code=202)
-def ingest_signal(payload: SignalIn, response: Response, repo=Depends(get_repo)):
+def ingest_signal(
+    payload: SignalIn,
+    response: Response,
+    repo=Depends(get_repo),
+    notification_client: NotificationClient = Depends(get_notification_client),
+):
     incident, created = svc.ingest_signal(
         repo,
         payload.title,
@@ -83,9 +121,11 @@ def ingest_signal(payload: SignalIn, response: Response, repo=Depends(get_repo))
     if created:
         response.status_code = 201
         INCIDENTS_CREATED.labels(payload.severity.value, payload.source.value).inc()
+        out = IncidentOut.model_validate(incident)
+        _notify_if_needed(repo, notification_client, out)
     else:
         SIGNALS_DEDUPED.labels(payload.severity.value, payload.source.value).inc()
-    out = IncidentOut.model_validate(incident)
+        out = IncidentOut.model_validate(incident)
     _set_etag(response, out)
     return out
 
@@ -226,6 +266,20 @@ def list_events(incident_id: int, repo=Depends(get_repo)):
         return [
             IncidentEventOut.model_validate(event)
             for event in svc.list_events(repo, incident_id)
+        ]
+    except Exception as exc:
+        _raise_api_error(exc)
+
+
+@router.get(
+    "/incidents/{incident_id}/notifications",
+    response_model=list[IncidentNotificationOut],
+)
+def list_notifications(incident_id: int, repo=Depends(get_repo)):
+    try:
+        return [
+            IncidentNotificationOut.model_validate(notification)
+            for notification in svc.list_notifications(repo, incident_id)
         ]
     except Exception as exc:
         _raise_api_error(exc)
